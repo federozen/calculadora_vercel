@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.vercel/
+node_modules/
+.DS_Store
+.streamlit/secrets.toml

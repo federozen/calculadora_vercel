@@ -1,0 +1,12 @@
+{
+  "name": "calculadora-lpf",
+  "version": "4.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Calculadora LPF 2026 en el navegador (Streamlit + stlite) con proxy serverless en Vercel.",
+  "scripts": {
+    "build": "node scripts/build-manifest.mjs",
+    "dev": "vercel dev"
+  },
+  "engines": { "node": ">=18" }
+}
