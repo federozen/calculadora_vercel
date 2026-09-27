@@ -1,3 +1,2 @@
-vercel.json
-pyproject.toml
-README.md
+[tool.vercel]
+entrypoint = "api.club:handler"
