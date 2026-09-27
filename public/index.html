@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>Calculadora LPF 2026</title>
+    <meta name="description" content="Calculadora de escenarios del fútbol argentino: playoffs, copas, descenso, escenarios y previas." />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/browser@1.9.2/build/stlite.css" />
+    <style>
+      html, body { margin: 0; background: #ffffff; }
+      #splash {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        background: #ffffff; z-index: 10; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #1f2937; transition: opacity .3s ease;
+      }
+      #splash.hide { opacity: 0; pointer-events: none; }
+      #splash .box { max-width: 420px; padding: 24px; text-align: center; }
+      #splash h1 { font-size: 22px; margin: 12px 0 6px; }
+      #splash p { color: #6b7280; font-size: 14px; line-height: 1.5; margin: 0; }
+      #splash .ball { font-size: 44px; display: inline-block; animation: spin 1.6s linear infinite; }
+      #splash .step { margin-top: 14px; font-size: 13px; color: #9ca3af; min-height: 1.2em; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-color-scheme: dark) {
+        html, body, #splash { background: #0e1117; }
+        #splash { color: #f3f4f6; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="splash" role="status" aria-live="polite">
+      <div class="box">
+        <div class="ball">⚽</div>
+        <h1>Calculadora LPF 2026</h1>
+        <p>Preparando el motor de cálculo en tu navegador. La primera visita tarda un poco más (descarga Python); después queda en caché.</p>
+        <div class="step" id="splash-step">Iniciando…</div>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script type="module">
+      import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@1.9.2/build/stlite.js";
+
+      // Streamlit usa la ruta actual como base de la app multipágina: arrancamos
+      // siempre desde "/" para que la navegación entre páginas funcione bien.
+      if (window.location.pathname !== "/") {
+        window.history.replaceState(null, "", "/" + window.location.search + window.location.hash);
+      }
+
+      const step = document.getElementById("splash-step");
+      const splash = document.getElementById("splash");
+      const setStep = (text) => { if (step) step.textContent = text; };
+
+      async function start() {
+        setStep("Leyendo archivos de la app…");
+        const manifest = await fetch("/app/files.json", { cache: "no-cache" }).then((r) => r.json());
+        const version = encodeURIComponent(manifest.version || "");
+        const files = {};
+        for (const path of manifest.files) {
+          files[path] = { url: `/app/${path}${version ? `?v=${version}` : ""}` };
+        }
+        setStep("Descargando Python y dependencias…");
+        mount(
+          {
+            entrypoint: "app.py",
+            requirements: ["pandas", "numpy", "scipy", "matplotlib", "lxml", "beautifulsoup4", "requests", "tzdata"],
+            files,
+            env: { LPF_PROXY_URL: `${window.location.origin}/api/proxy` },
+            streamlitConfig: {
+              "client.toolbarMode": "minimal",
+              "browser.gatherUsageStats": false,
+              "theme.primaryColor": "#e94560",
+            },
+          },
+          document.getElementById("root"),
+        );
+        const observer = new MutationObserver(() => {
+          if (document.querySelector('[data-testid="stSidebar"], [data-testid="stMain"]')) {
+            splash.classList.add("hide");
+            setTimeout(() => splash.remove(), 400);
+            observer.disconnect();
+          }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+      }
+
+      start().catch((err) => {
+        setStep("No se pudo iniciar la app: " + (err && err.message ? err.message : err));
+      });
+    </script>
+  </body>
+</html>
