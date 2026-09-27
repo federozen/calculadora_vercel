@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Calculadora LPF · Por club</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div class="eyebrow">CALCULADORA LPF 2026</div>
+      <h1>Todo lo que necesita un club, en una sola pantalla.</h1>
+      <p>Elegí el equipo. Sin chat, sin comandos y sin elegir qué cálculo querés hacer.</p>
+    </header>
+
+    <section class="picker card">
+      <label for="team">Club</label>
+      <div class="pickrow">
+        <select id="team"><option>Cargando equipos…</option></select>
+        <button id="go">Ver panorama</button>
+      </div>
+      <div id="status" class="status"></div>
+    </section>
+
+    <section id="result" class="hidden">
+      <div class="titleline">
+        <div>
+          <div id="zoneLabel" class="eyebrow"></div>
+          <h2 id="clubName"></h2>
+        </div>
+        <button id="reload" class="ghost">Actualizar cálculo</button>
+      </div>
+
+      <div class="metrics">
+        <article class="metric"><span>Zona</span><strong id="zonePos">—</strong><small id="zonePts">—</small></article>
+        <article class="metric"><span>Tabla Anual</span><strong id="annualPos">—</strong><small id="annualPts">—</small></article>
+        <article class="metric"><span>Chance playoffs</span><strong id="playoffChance">—</strong><small id="playoffCut">—</small></article>
+        <article class="metric"><span>Partidos por jugar</span><strong id="gamesLeft">—</strong><small id="ceiling">—</small></article>
+      </div>
+
+      <div class="grid2">
+        <article class="card feature">
+          <div class="eyebrow">PRÓXIMO PARTIDO</div>
+          <h3 id="nextMatch">—</h3>
+          <div id="previewText" class="copy"></div>
+        </article>
+        <article class="card">
+          <div class="eyebrow">PLAYOFFS</div>
+          <h3>Puntos por objetivo</h3>
+          <div id="playoffBody" class="copy"></div>
+        </article>
+      </div>
+
+      <div class="grid2">
+        <article class="card">
+          <div class="eyebrow">COPAS 2027</div>
+          <h3>Libertadores</h3>
+          <div id="libBody" class="copy"></div>
+        </article>
+        <article class="card">
+          <div class="eyebrow">COPAS 2027</div>
+          <h3>Sudamericana</h3>
+          <div id="sudBody" class="copy"></div>
+        </article>
+      </div>
+
+      <article class="card">
+        <div class="eyebrow">TABLA DE LA ZONA</div>
+        <div class="tablewrap"><table id="zoneTable"></table></div>
+      </article>
+
+      <article id="qualityCard" class="card warning hidden">
+        <div class="eyebrow">CALIDAD DE DATOS</div>
+        <h3>Advertencias de la foto actual</h3>
+        <div id="quality"></div>
+      </article>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
