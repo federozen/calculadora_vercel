@@ -1,5 +1,0 @@
-{
-  "functions": {
-    "api/club.py": { "maxDuration": 60 }
-  }
-}
