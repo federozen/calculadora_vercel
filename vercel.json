@@ -3,7 +3,7 @@
   "buildCommand": "node scripts/build-manifest.mjs",
   "outputDirectory": "public",
   "functions": {
-    "api/proxy.js": { "maxDuration": 60 }
+    "api/proxy.js": { "maxDuration": 30 }
   },
   "rewrites": [
     { "source": "/((?!api/|app/).*)", "destination": "/index.html" }
