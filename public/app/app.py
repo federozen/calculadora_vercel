@@ -62,7 +62,7 @@ from lpf_models import DataQualityReport
 from lpf_competition_narratives import (
     libertadores_story, relegation_story, round_preview_story, sudamericana_story, zone_story,
 )
-from lpf_scenarios import can_fail_with_points, can_finish_exact_rank_by_points, exact_objective_result_states, exact_result_scenarios, point_ladder, scenario_rank_bounds, best_worst_window_scenarios, reachable_point_totals
+from lpf_scenarios import can_fail_with_points, can_qualify_with_points, can_finish_exact_rank_by_points, exact_objective_result_states, exact_result_scenarios, point_ladder, scenario_rank_bounds, best_worst_window_scenarios, reachable_point_totals
 from lpf_pisos import (
     VENTANA_EXACTA, piso_no_descenso, piso_por_corte, pisos_de_equipo,
     promedio_totales, tabla_pisos_objetivo,
@@ -12520,6 +12520,189 @@ def _sidebar_context():
                     ui_caption(_msg[2])
 
 
+@st.cache_data(show_spinner=False, max_entries=16)
+def _cierre_probabilidades(base, rest, pend, cutoff):
+    """% estimado de terminar entre los ``cutoff`` primeros (Monte Carlo)."""
+    try:
+        frame = liga_probabilidades_df(base, rest, pend, [(cutoff, "Clasifica", None)])
+    except Exception:
+        return {}
+    col = "Clasifica %"
+    return {row["Equipo"]: float(row[col]) for _, row in frame.iterrows()} if col in frame else {}
+
+
+def _cierre_lectura(prob):
+    if prob is None:
+        return ""
+    if prob >= 95:
+        return "prácticamente adentro"
+    if prob >= 75:
+        return "muy bien perfilado"
+    if prob >= 50:
+        return "con más chances de entrar que de quedar afuera"
+    if prob >= 25:
+        return "en plena pelea"
+    if prob >= 8:
+        return "necesita una buena racha y ayuda"
+    return "con chances mínimas"
+
+
+def _cierre_fixture_text(team, pending, fecha_map, all_points, pts_label=True):
+    own = [m for m in pending if team in m]
+    own.sort(key=lambda m: (fecha_map.get(m) is None, fecha_map.get(m) or 0))
+    parts = []
+    for local, visitor in own:
+        rival = visitor if local == team else local
+        cond = "de local" if local == team else "de visitante"
+        fecha = fecha_map.get((local, visitor))
+        rival_pts = all_points.get(rival)
+        rival_txt = editorialize_text(rival) + (f" ({rival_pts})" if rival_pts is not None else "")
+        parts.append((f"F{fecha}: " if fecha else "") + f"{rival_txt} {cond}")
+    return parts
+
+
+def _cierre_exact_state(base, pending, team, cutoff):
+    """Mínimo exacto que asegura con búsqueda binaria (≈6 MILP por equipo en vez de ≈30).
+
+    Asegurar es monótono en los puntos finales: si con N no hay cierre que lo deje
+    afuera, con N+1 tampoco. Devuelve (eliminado, garantía).
+    """
+    current = int(base[team].get("pts", 0))
+    left = sum(1 for m in pending if team in m)
+    totals = sorted(reachable_point_totals(current, left))
+    if not totals:
+        return False, None
+    if not can_qualify_with_points(base, pending, team, cutoff, totals[-1]).feasible:
+        return True, None
+    if can_fail_with_points(base, pending, team, cutoff, totals[-1]).feasible:
+        return False, None
+    lo, hi = 0, len(totals) - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if can_fail_with_points(base, pending, team, cutoff, totals[mid]).feasible:
+            lo = mid + 1
+        else:
+            hi = mid
+    return False, int(totals[lo])
+
+
+def render_cierre_por_zona(E):
+    """Pieza de redacción: cierre del Clausura zona por zona, equipo por equipo."""
+    _page_header("📝", "Cierre por zona", "Pieza lista para la nota: puntos, chances y lo que le queda a cada equipo")
+    Z = E.get("zonas_lpf") or {}
+    rest = E.get("rest") or {}
+    pending = list(E.get("pendientes") or [])
+    if len(Z) < 2:
+        ui_warning("Cargá las dos zonas para armar la pieza.")
+        return
+    cutoff = _LPF_TOP_OCTAVOS
+    c1, c2 = st.columns([1, 1.4])
+    with c1:
+        zonas_sel = _pick("Zonas", ["Las dos", "Zona A", "Zona B"], key="cierre_zonas")
+    with c2:
+        exacto = st.toggle(
+            "Sumar el mínimo exacto que asegura (tarda: hasta ~30 s en el navegador la primera vez)",
+            value=False, key="cierre_exacto",
+            help=f"Usa el motor exacto para cada equipo con {VENTANA_EXACTA} partidos o menos por jugar.",
+        )
+    fecha_map = _lpf_fecha_de(pending)
+    all_points = {team: int(row.get("pts", 0)) for base in Z.values() for team, row in base.items()}
+    annual = lpf_anual_base(Z, E.get("apertura") or {})
+    annual_order = list(liga_tabla_df(annual)["Equipo"]) if annual else []
+    n_annual = len(annual_order)
+    remaining_rounds = sorted({f for f in fecha_map.values() if f is not None})
+
+    lines_md = []
+    intro = (
+        f"Quedan **{len(remaining_rounds)} fecha{'s' if len(remaining_rounds) != 1 else ''}** "
+        f"del Clausura y clasifican los **{cutoff} primeros** de cada zona a octavos. "
+        "Entre paréntesis, los puntos que tiene hoy cada rival."
+    )
+    ui_markdown(intro)
+    ui_caption("Estados «clasificado» y «eliminado» son EXACTOS. El porcentaje es ESTIMADO (simulación del resto del torneo).")
+    lines_md.append(intro)
+
+    labels = sorted(Z)
+    if zonas_sel == "Zona A":
+        labels = [x for x in labels if x == "A"]
+    elif zonas_sel == "Zona B":
+        labels = [x for x in labels if x == "B"]
+
+    for lab in labels:
+        base = Z[lab]
+        table = liga_tabla_df(base)
+        probs = _cierre_probabilidades(base, rest, pending, cutoff)
+        cut_pts = int(table.iloc[min(cutoff, len(table)) - 1]["PTS"])
+        next_pts = int(table.iloc[min(cutoff, len(table) - 1)]["PTS"]) if len(table) > cutoff else None
+        head = f"### Zona {lab}"
+        ui_markdown(head)
+        lines_md.append(head)
+        for _, row in table.iterrows():
+            team = row["Equipo"]
+            pos = int(row["Pos"])
+            pts = int(row["PTS"])
+            left = int(rest.get(team, 0))
+            ceiling = pts + 3 * left
+            state = _liga_in_out(team, base, rest, cutoff)
+            prob = probs.get(team)
+            guarantee = None
+            if exacto and 0 < left <= VENTANA_EXACTA:
+                try:
+                    eliminated, guarantee = _cierre_exact_state(base, pending, team, cutoff)
+                    if eliminated:
+                        state = "out"
+                    elif guarantee is not None and guarantee <= pts:
+                        state = "in"
+                except Exception:
+                    guarantee = None
+
+            if state == "in":
+                chance = "**Ya está clasificado** a los octavos."
+            elif state == "out":
+                chance = "**Ya no puede clasificar**: aunque gane todo, no le alcanza."
+            else:
+                if pos <= cutoff:
+                    gap = pts - next_pts if next_pts is not None else 0
+                    where = (f"Hoy está adentro ({pos}º) y le saca {gap} punto{'s' if gap != 1 else ''} al {cutoff + 1}º"
+                             if gap > 0 else f"Hoy está adentro ({pos}º), igualado con el {cutoff + 1}º")
+                else:
+                    gap = cut_pts - pts
+                    where = (f"Hoy está afuera ({pos}º), a {gap} punto{'s' if gap != 1 else ''} del {cutoff}º"
+                             if gap > 0 else
+                             f"Hoy está afuera ({pos}º), igualado en puntos con el {cutoff}º (lo deja afuera el desempate)")
+                chance = where + "."
+                if prob is not None:
+                    pct = "más del 99%" if prob >= 99.5 else ("menos del 1%" if prob < 0.5 else f"{prob:.0f}%")
+                    chance += f" Chance estimada de clasificar: **{pct}**, {_cierre_lectura(prob)}."
+                if guarantee is not None:
+                    need = max(0, int(guarantee) - pts)
+                    chance += f" Se asegura el pase con **{guarantee} puntos** (le faltan {need} de {3 * left})."
+                elif exacto and 0 < left <= VENTANA_EXACTA:
+                    chance += " Ni ganando todo se asegura el pase: depende también de otros resultados."
+            extra = ""
+            if team in annual_order and n_annual and annual_order.index(team) + 1 >= n_annual - 2:
+                extra = f" Además pelea abajo: es {annual_order.index(team) + 1}º de la Tabla General."
+            fixture = _cierre_fixture_text(team, pending, fecha_map, all_points)
+            fixture_txt = ("**Le queda:** " + ", ".join(fixture) + ".") if fixture else "**Ya no le quedan partidos.**"
+            line = (
+                f"**{pos}. {editorialize_text(team)}, {pts} punto{'s' if pts != 1 else ''}** "
+                f"({left} por jugar, techo {ceiling}). {chance}{extra} {fixture_txt}"
+            )
+            ui_markdown(line)
+            lines_md.append(line)
+
+    plain = "\n\n".join(lines_md)
+    with st.expander("Texto para copiar", expanded=False):
+        st.text_area("Pieza completa", value=plain.replace("**", ""), height=320, key="cierre_copy",
+                     label_visibility="collapsed")
+        st.download_button("Descargar .md", plain.encode("utf-8"), file_name="cierre_por_zona.md",
+                           mime="text/markdown", key="cierre_md")
+
+
+def _page_cierre():
+    render_cierre_por_zona(st.session_state.ESTADO)
+
+
 def _page_panel():
     render_guided_workspace(st.session_state.ESTADO)
 
@@ -12600,6 +12783,7 @@ _PAGES = {
     ],
     "Redacción": [
         st.Page(_page_report, title="Informe por equipo", icon="🗞️", url_path="informe"),
+        st.Page(_page_cierre, title="Cierre por zona", icon="📝", url_path="cierre"),
         st.Page(_page_chat, title="Consultas y chat", icon="💬", url_path="chat"),
     ],
     "Datos": [
