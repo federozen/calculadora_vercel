@@ -5761,7 +5761,8 @@ def _render_load_block():
                "y el **fixture completo de las 16 fechas** para los cruces mano a mano.")
     if st.button("\U0001F504 Actualizar a hoy (automático)", use_container_width=True, key="btn_espn_refresh_side"):
         with st.spinner("Consultando LPF oficial, ESPN y FutbolArgentino.com\u2026"):
-            _r, _e = cargar_lpf_espn("arg.1")
+            with _web_http.time_budget(90):
+                _r, _e = cargar_lpf_espn("arg.1")
         if _e:
             ui_warning(_e + "  \u2014 mientras tanto podés pegar las tablas en «Otras formas de cargar».")
         else:
@@ -5799,7 +5800,8 @@ def _render_load_block():
                        "a Octavos. La **Tabla General** (para copas y descenso) suma Apertura + Clausura.")
             if st.button("⚡ Traer el Clausura automáticamente", use_container_width=True):
                 with st.spinner("Consultando LPF oficial, ESPN y FutbolArgentino.com…"):
-                    _r, _e = cargar_lpf_espn("arg.1")
+                    with _web_http.time_budget(90):
+                        _r, _e = cargar_lpf_espn("arg.1")
                 if _e:
                     ui_warning(_e)
                 else:
@@ -12147,10 +12149,11 @@ def _global_team(teams):
     return "River Plate" if "River Plate" in teams else sorted(teams)[0]
 
 
-def _run_auto_update(rerun=True):
-    with st.spinner("Actualizando a hoy: consultando LPF oficial, ESPN, TyC y FutbolArgentino.com…"):
+def _run_auto_update(rerun=True, budget=90):
+    with st.spinner(f"Actualizando a hoy desde LPF, ESPN, TyC y FutbolArgentino (máx. {budget} s)…"):
         try:
-            _r, _e = cargar_lpf_espn("arg.1")
+            with _web_http.time_budget(budget):
+                _r, _e = cargar_lpf_espn("arg.1")
         except Exception as exc:  # nunca dejar la app sin arrancar por una fuente caída
             _r, _e = {}, f"{type(exc).__name__}: {exc}"
     if _e:
@@ -12302,10 +12305,25 @@ _PAGES = {
 }
 
 _nav = st.navigation(_PAGES, position="top")
-# Una vez por sesión se intenta traer la fecha actual; si las fuentes fallan, la app
-# sigue con la última foto incluida y lo avisa en el panel lateral.
-if not st.session_state.get("_AUTO_UPDATE_DONE") and (st.session_state.ESTADO or {}).get("modo") == "lpf2026":
-    st.session_state["_AUTO_UPDATE_DONE"] = True
-    _run_auto_update(rerun=False)
 _sidebar_context()
 _nav.run()
+
+# Una vez por sesión se intenta traer la fecha actual. Corre DESPUÉS de dibujar la
+# página (fragmento con temporizador), así la app se ve y se puede leer mientras
+# tanto; si las fuentes tardan o fallan, sigue con la última foto incluida y lo
+# avisa en el panel lateral.
+@st.fragment(run_every=1.5)
+def _auto_update_tick():
+    if st.session_state.get("_AUTO_UPDATE_DONE"):
+        return
+    if not st.session_state.get("_AUTO_UPDATE_ARMED"):
+        st.session_state["_AUTO_UPDATE_ARMED"] = True
+        return
+    st.session_state["_AUTO_UPDATE_DONE"] = True
+    _run_auto_update(rerun=False, budget=30)
+    st.rerun(scope="app")
+
+
+if not st.session_state.get("_AUTO_UPDATE_DONE") and (st.session_state.ESTADO or {}).get("modo") == "lpf2026":
+    with st.sidebar:
+        _auto_update_tick()

@@ -1,5 +1,9 @@
 // Proxy HTTP para la calculadora (Vercel Serverless Function, Node 18+).
 //
+// GET /api/proxy?url=…&h=<cabeceras base64url>&t=<segundos>  → cacheado en el CDN de
+//   Vercel (10 min frescos + 1 día sirviendo la copia anterior mientras se renueva).
+// POST /api/proxy {url, method, headers, body, timeout, redirect} → sin caché.
+//
 // La app corre en el navegador (stlite/Pyodide) y no puede consultar LPF, ESPN,
 // TyC, etc. directamente: el navegador bloquea esas peticiones (CORS) y prohíbe
 // cabeceras como User-Agent o Referer. Python le manda acá un JSON con el pedido
@@ -53,9 +57,31 @@ function decode(bytes, contentType) {
 
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Cache-Control", "no-store");
+}
+
+const CACHE_OK = "public, max-age=0, s-maxage=600, stale-while-revalidate=86400";
+
+function specFromQuery(req) {
+  const query = new URL(req.url, "http://local").searchParams;
+  let headers = {};
+  const packed = query.get("h");
+  if (packed) {
+    try {
+      headers = JSON.parse(Buffer.from(packed, "base64url").toString("utf-8"));
+    } catch {
+      headers = {};
+    }
+  }
+  return {
+    url: query.get("url") || "",
+    method: "GET",
+    headers,
+    timeout: Number(query.get("t")) || 15,
+    redirect: query.get("r") !== "0",
+  };
 }
 
 async function readJson(req) {
@@ -69,11 +95,11 @@ async function readJson(req) {
 export default async function handler(req, res) {
   cors(res);
   if (req.method === "OPTIONS") return res.status(204).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Usá POST con un JSON {url, method, headers, body}." });
+  if (!["GET", "POST"].includes(req.method)) return res.status(405).json({ error: "Usá GET ?url=… o POST con JSON." });
 
   let spec;
   try {
-    spec = await readJson(req);
+    spec = req.method === "GET" ? specFromQuery(req) : await readJson(req);
   } catch {
     return res.status(400).json({ error: "JSON inválido." });
   }
@@ -98,7 +124,7 @@ export default async function handler(req, res) {
   for (const [key, value] of Object.entries(spec.headers || {})) {
     if (!DROP_REQUEST_HEADERS.has(key.toLowerCase()) && value != null) headers[key] = String(value);
   }
-  const seconds = Math.min(Math.max(Number(spec.timeout) || 30, 1), 55);
+  const seconds = Math.min(Math.max(Number(spec.timeout) || 20, 1), 25);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), seconds * 1000);
 
@@ -118,6 +144,8 @@ export default async function handler(req, res) {
     upstream.headers.forEach((value, key) => {
       if (!["set-cookie", "content-encoding", "content-length"].includes(key)) outHeaders[key] = value;
     });
+    // Sólo se guardan en el CDN las respuestas buenas de pedidos GET.
+    if (req.method === "GET" && upstream.status === 200) res.setHeader("Cache-Control", CACHE_OK);
     return res.status(200).json({
       status: upstream.status,
       statusText: upstream.statusText,
