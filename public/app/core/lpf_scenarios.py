@@ -462,6 +462,69 @@ def _describe_outcomes(outcomes: Mapping[tuple[str, str], str] | None, team: str
     return descriptions
 
 
+def _final_points(base: Mapping[str, object], outcomes: Mapping[tuple[str, str], str] | None) -> dict[str, int]:
+    """Puntos finales de cada equipo de ``base`` bajo un cierre completo del solver."""
+    finals = {name: _points(value) for name, value in base.items()}
+    for (home, away), result in (outcomes or {}).items():
+        o = OUTCOMES.index(result) if result in OUTCOMES else 1
+        if home in finals:
+            finals[home] += POINTS_HOME[o]
+        if away in finals:
+            finals[away] += POINTS_AWAY[o]
+    return finals
+
+
+def _fmt_rivals(rows: Iterable[tuple[str, int]]) -> list[str]:
+    return [f"{name} ({pts})" for name, pts in rows]
+
+
+def _ladder_reading(base, matches, team, cutoff, pts, q_outcomes, fail_outcomes):
+    """Qué significa, en concreto, terminar con ``pts`` puntos.
+
+    Devuelve quiénes quedan por encima en un cierre en el que entra, quiénes lo
+    alcanzan o superan en un cierre en el que queda afuera, y qué rivales todavía
+    pueden llegar a ese total. Todo sale de cierres completos del fixture real.
+    """
+    rivals = [t for t in base if t != team]
+    games = {t: 0 for t in base}
+    for home, away in matches:
+        if home in games:
+            games[home] += 1
+        if away in games:
+            games[away] += 1
+    can_reach = sorted(
+        ((t, _points(base[t]) + 3 * games[t]) for t in rivals if _points(base[t]) + 3 * games[t] >= pts),
+        key=lambda kv: (-_points(base[kv[0]]), kv[0]),
+    )
+    fin_in = _final_points(base, q_outcomes)
+    fin_out = _final_points(base, fail_outcomes)
+    above_in = sorted(((t, fin_in[t]) for t in rivals if fin_in[t] > pts), key=lambda kv: (-kv[1], kv[0]))
+    tied_in = sorted(((t, fin_in[t]) for t in rivals if fin_in[t] == pts), key=lambda kv: kv[0])
+    passing_out = sorted(((t, fin_out[t]) for t in rivals if fin_out[t] >= pts), key=lambda kv: (-kv[1], kv[0]))
+    below_in = sorted(((t, fin_in[t]) for t in rivals if fin_in[t] < pts), key=lambda kv: (kv[1], kv[0]))
+    below_out = sorted(((t, fin_out[t]) for t in rivals if fin_out[t] < pts), key=lambda kv: (kv[1], kv[0]))
+    stay_below = sorted(((t, _points(base[t])) for t in rivals if _points(base[t]) < pts), key=lambda kv: (kv[1], kv[0]))
+    return {
+        "rivals_below_if_in": _fmt_rivals(below_in),
+        "rivals_below_if_out": _fmt_rivals(below_out),
+        "rivals_can_stay_below": [f"{name} (hoy {value})" for name, value in stay_below],
+        "rivals_above_if_in": _fmt_rivals(above_in),
+        "rivals_tied_if_in": _fmt_rivals(tied_in),
+        "rivals_passing_if_out": _fmt_rivals(passing_out),
+        "rivals_can_reach": [f"{name} (hasta {value})" for name, value in can_reach],
+        "max_rivals_above": max(0, int(cutoff) - 1),
+    }
+
+
+def _join_es(items: Sequence[str]) -> str:
+    items = list(items)
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " y " + items[-1]
+
+
 def point_ladder(
     base: Mapping[str, object],
     matches: Iterable[tuple[str, str]],
@@ -495,16 +558,33 @@ def point_ladder(
         guaranteed = not fail.feasible
         if guaranteed and guarantee is None:
             guarantee = pts
-        status = "Mínimo que asegura" if guaranteed else "Clasificación condicionada"
+        status = "Mínimo que asegura" if guaranteed else "Depende de otros resultados"
+        reading = {} if guaranteed else _ladder_reading(
+            base, matches, team, cutoff, pts, q.outcomes, fail.outcomes
+        )
+        example: list[str] = []
+        if not guaranteed:
+            above = reading["rivals_above_if_in"]
+            tied = reading["rivals_tied_if_in"]
+            passing = reading["rivals_passing_if_out"]
+            example.append(
+                "entra si terminan arriba sólo " + _join_es(above) if above
+                else "entra si nadie termina con más puntos"
+            )
+            if tied and len(above) + len(tied) >= int(cutoff):
+                example[-1] += " (igualan " + _join_es(tied) + ": define el desempate)"
+            if passing:
+                example.append(f"queda afuera si llegan a {pts} o más " + _join_es(passing))
         statuses.append(PointLadderRow(
             final_points=pts,
             status=status,
             can_qualify=True,
             can_fail=fail.feasible,
             guaranteed=guaranteed,
-            example=[] if guaranteed else _describe_outcomes(q.outcomes, team),
+            example=example,
             note=("No depende de otros resultados ni del desempate." if guaranteed else
-                  "Existe al menos un camino de clasificación y también un escenario de eliminación."),
+                  f"Entra si como máximo {max(0, int(cutoff) - 1)} rivales terminan por encima."),
+            **reading,
         ))
         if guarantee is not None and pts >= guarantee + 3:
             break

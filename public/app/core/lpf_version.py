@@ -1,3 +1,3 @@
 """Versión pública de la calculadora."""
 
-__version__ = "4.1.0-vercel"
+__version__ = "3.8.74-vercel"

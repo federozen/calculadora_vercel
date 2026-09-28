@@ -30,6 +30,7 @@ from typing import Mapping, Sequence
 from lpf_scenarios import point_ladder
 from lpf_averages import combine_average_totals
 from lpf_exact import safe_average_guarantee_points, safe_guarantee_line
+from lpf_relegation import joint_relegation_exact_ladder
 
 # El motor exacto se reserva para el tramo final: es un problema de optimización
 # entera y se encarece con ventanas grandes. Medido sobre zonas de 16 equipos, el
@@ -113,6 +114,11 @@ class PisoObjetivo:
             return f"Sin chances: aun ganando todo llega a {self.techo} y no alcanza."
         piso = self.piso
         if piso is None:
+            if self.exacto:
+                return (
+                    f"El chequeo exacto conjunto no encontró ningún total alcanzable que asegure {self.nombre}; "
+                    "incluso con el máximo todavía existe al menos un cierre compatible de descenso."
+                )
             return f"En carrera; el mínimo que asegura se calcula con {VENTANA_EXACTA} partidos restantes o menos."
         faltan = max(0, piso - self.puntos_hoy)
         cola = "" if faltan == 0 else f" (le faltan {faltan})"
@@ -219,7 +225,7 @@ def piso_por_corte(
                     ejemplo = ""
                     ej_list = getattr(row, "example", None)
                     if ej_list:
-                        ejemplo = "; ".join(ej_list[:2])
+                        ejemplo = " · ".join(ej_list[:2])
                     resultado.caminos.append((
                         int(getattr(row, "final_points", 0)),
                         str(getattr(row, "status", "")),
@@ -276,10 +282,9 @@ def piso_no_descenso(
         except Exception:
             piso_prom = None
 
-    # Combinar: para no descender hay que quedar a salvo en las dos tablas.
-    # La Anual puede tener un mínimo exacto; promedios aporta un total
-    # seguro. Si esa referencia exige más que la garantía anual, el objetivo
-    # global deja de ser exacto y manda el mayor total seguro.
+    # Combinar. En la ventana final se usa un solver conjunto: no alcanza con
+    # tomar el máximo de dos pisos calculados por separado porque el descendido
+    # por promedio queda excluido de la vía anual (regla de duplicación).
     prom_disponible = bool(prom_totales and team in prom_totales)
     annual_safe = parte_anual.piso
     safe_values = [value for value in (annual_safe, piso_prom) if value is not None]
@@ -290,8 +295,6 @@ def piso_no_descenso(
         promedio_ya_seguro = piso_prom is not None and piso_prom <= parte_anual.puntos_hoy
         estado_global = "in" if parte_anual.estado == "in" and promedio_ya_seguro else "pelea"
     else:
-        # Sin promedios no se inventa una conclusión sobre esa vía; se conserva la
-        # lectura anual y la interfaz avisa que falta cargar los antecedentes.
         estado_global = parte_anual.estado
 
     resultado = PisoObjetivo(
@@ -301,6 +304,49 @@ def piso_no_descenso(
         minimo_posible=parte_anual.minimo_posible,
     )
 
+    games_left = max(0, int(rest.get(team, 0)))
+    joint = None
+    if prom_disponible and games_left <= VENTANA_EXACTA:
+        joint = joint_relegation_exact_ladder(
+            anual, rest, pend, prom_totales, team,
+            annual_relegations=int(n_anual),
+            average_relegations=int(n_prom),
+            exact_window=VENTANA_EXACTA,
+        )
+
+    if joint and joint.get("available"):
+        # Esta es la cuenta publicable en últimas fechas: Tabla Anual + promedios
+        # resueltos a la vez, incluida la exclusión del descendido por promedio.
+        resultado.exacto = True
+        guarantee = joint.get("guarantee")
+        resultado.piso_exacto = int(guarantee) if guarantee is not None else None
+        resultado.piso_conservador = None
+        resultado.caminos = [
+            (
+                int(row.get("final_points", 0)),
+                "seguro" if row.get("safe") else "riesgo",
+                str(row.get("detail", "")),
+            )
+            for row in (joint.get("rows") or [])
+        ]
+        if guarantee is not None and int(guarantee) <= resultado.puntos_hoy:
+            resultado.estado = "in"
+        elif guarantee is None:
+            resultado.estado = "pelea"
+            resultado.detalle = (
+                "El solver exacto conjunto probó todos los totales alcanzables y no encontró una marca que "
+                "asegure la permanencia sin depender de otros resultados."
+            )
+        else:
+            resultado.estado = "pelea"
+            resultado.detalle = (
+                "Mínimo exacto conjunto: considera a la vez Tabla General, promedios, fixture pendiente y "
+                "la regla que excluye de la anual al club que ya desciende por promedio."
+            )
+        return resultado
+
+    # Fuera de la ventana exacta (o si falta fixture/promedios) se conserva la
+    # referencia segura histórica, pero nunca se presenta como mínimo exacto.
     if not prom_disponible:
         resultado.piso_exacto = parte_anual.piso_exacto
         resultado.piso_conservador = parte_anual.piso_conservador
@@ -311,9 +357,6 @@ def piso_no_descenso(
         and piso_prom is not None
         and piso_prom <= parte_anual.piso_exacto
     ):
-        # El mínimo exacto de la Anual ya supera la exigencia segura de
-        # promedios. Como cualquier total menor falla la Anual en algún escenario,
-        # ese mismo número es también el mínimo exacto del objetivo combinado.
         resultado.piso_exacto = parte_anual.piso_exacto
         resultado.exacto = True
     else:

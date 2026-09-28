@@ -69,6 +69,16 @@ class PointLadderRow:
     guaranteed: bool
     example: list[str] = field(default_factory=list)
     note: str = ""
+    # Lectura editorial de la escalera (sólo en totales condicionados). Son listas
+    # de texto «Equipo (puntos finales)» para que sigan siendo JSON-safe.
+    rivals_above_if_in: list[str] = field(default_factory=list)
+    rivals_tied_if_in: list[str] = field(default_factory=list)
+    rivals_passing_if_out: list[str] = field(default_factory=list)
+    rivals_can_reach: list[str] = field(default_factory=list)
+    rivals_below_if_in: list[str] = field(default_factory=list)
+    rivals_below_if_out: list[str] = field(default_factory=list)
+    rivals_can_stay_below: list[str] = field(default_factory=list)
+    max_rivals_above: int = 0
 
 
 @dataclass
