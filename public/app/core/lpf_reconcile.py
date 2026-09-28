@@ -96,6 +96,26 @@ def _validate_lpf_tables(zones, annual=None):
     return True
 
 
+_FIXTURE_PAIRS_CACHE: dict[int, frozenset] = {}
+
+
+def _lpf_fixture_pairs():
+    """Parejas oficiales (local, visitante) canonizadas, calculadas una sola vez."""
+    key = id(LPF_FIXTURE)
+    cached = _FIXTURE_PAIRS_CACHE.get(key)
+    if cached is None:
+        try:
+            cached = frozenset(
+                (canon_club(row.get("l") or row.get("home") or ""),
+                 canon_club(row.get("v") or row.get("away") or ""))
+                for row in LPF_FIXTURE
+            )
+        except Exception:
+            cached = frozenset()
+        _FIXTURE_PAIRS_CACHE[key] = cached
+    return cached
+
+
 def _lpf_normalize_result_identity(local, visitor, gl, gv):
     """Normaliza un marcador contra la identidad oficial del partido.
 
@@ -106,14 +126,7 @@ def _lpf_normalize_result_identity(local, visitor, gl, gv):
     """
     cl, cv = canon_club(local), canon_club(visitor)
     gl, gv = int(gl), int(gv)
-    try:
-        fixture_pairs = {
-            (canon_club(row.get("l") or row.get("home") or ""),
-             canon_club(row.get("v") or row.get("away") or ""))
-            for row in LPF_FIXTURE
-        }
-    except Exception:
-        fixture_pairs = set()
+    fixture_pairs = _lpf_fixture_pairs()
     direct = (cl, cv) in fixture_pairs
     reverse = (cv, cl) in fixture_pairs
     if reverse and not direct:

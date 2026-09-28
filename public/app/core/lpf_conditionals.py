@@ -509,3 +509,9 @@ def key_rival_matrix(
         "cells": cells,
         "frequency_note": "Los demás resultados se enumeran exactamente; no se asignan probabilidades.",
     }
+
+
+# Memoización: la UI repite estos cálculos en cada clic con los mismos datos.
+from lpf_memo import memoize as _memoize
+next_round_conditionals = _memoize(next_round_conditionals)
+key_rival_matrix = _memoize(key_rival_matrix)

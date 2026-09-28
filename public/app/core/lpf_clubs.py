@@ -62,7 +62,7 @@ for _c, _als in LPF_CLUBES.items():
     for _a in _als:
         _LPF_LOOKUP[_norm_club(_a)] = _c
 
-def canon_club(nombre):
+def _canon_club_uncached(nombre):
     """Nombre canónico del club, venga de donde venga. Compara SIEMPRE el nombre completo primero,
     para no confundir «Gimnasia (M)» con «Gimnasia» ni «Estudiantes RC» con «Estudiantes»."""
     n = _norm_club(nombre)
@@ -85,3 +85,18 @@ def canon_club(nombre):
 
 def canon_base(base):
     return {canon_club(e): d for e, d in (base or {}).items()}
+
+
+from functools import lru_cache as _lru_cache
+
+
+@_lru_cache(maxsize=4096)
+def _canon_club_str(nombre: str):
+    return _canon_club_uncached(nombre)
+
+
+def canon_club(nombre):
+    """Nombre canónico del club (memorizado: se llama cientos de miles de veces)."""
+    if isinstance(nombre, str):
+        return _canon_club_str(nombre)
+    return _canon_club_uncached(nombre)

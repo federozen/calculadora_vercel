@@ -1,5 +1,5 @@
 {
-  "version": "3547e812b3e4",
+  "version": "633b796c3b6a",
   "files": [
     "app.py",
     "core/competition_html_adapters.py",
@@ -21,6 +21,7 @@
     "core/lpf_http.py",
     "core/lpf_intents.py",
     "core/lpf_loading.py",
+    "core/lpf_memo.py",
     "core/lpf_models.py",
     "core/lpf_parsers.py",
     "core/lpf_pisos.py",

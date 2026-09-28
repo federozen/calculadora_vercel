@@ -295,11 +295,11 @@ def _joint_relegation_feasible(
     else:
         return {"available": False, "feasible": False, "reason": f"ruta desconocida: {route}"}
 
-    A = lil_matrix((len(rows), nvars), dtype=float)
+    # Armado vectorizado (antes fila por fila en lil_matrix: 10-30x más lento).
+    A = np.vstack([row for row, _low, _high in rows]).astype(float) if rows else np.zeros((0, nvars))
     lb = np.empty(len(rows))
     ub = np.empty(len(rows))
     for idx, (row, low, high) in enumerate(rows):
-        A[idx, :] = row
         lb[idx] = low
         ub[idx] = high
 
@@ -307,7 +307,7 @@ def _joint_relegation_feasible(
         c=np.zeros(nvars),
         integrality=np.ones(nvars),
         bounds=Bounds(np.zeros(nvars), np.ones(nvars)),
-        constraints=LinearConstraint(A.tocsr(), lb, ub),
+        constraints=LinearConstraint(A, lb, ub),
         options={"time_limit": 10.0, "mip_rel_gap": 0.0},
     )
     feasible = bool(result.success and result.x is not None)
@@ -422,3 +422,9 @@ def joint_relegation_exact_ladder(
         "exact": True,
         "reason": "",
     }
+
+
+# Memoización: la UI repite estos cálculos en cada clic con los mismos datos.
+from lpf_memo import memoize as _memoize
+_joint_relegation_feasible = _memoize(_joint_relegation_feasible)
+joint_relegation_exact_ladder = _memoize(joint_relegation_exact_ladder)

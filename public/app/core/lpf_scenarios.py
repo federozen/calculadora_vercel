@@ -73,7 +73,41 @@ def _matches_relevant_to_base(
     return tuple(match for match in _normalize_matches(matches) if match[0] in teams or match[1] in teams)
 
 
+_MODEL_CACHE: dict[tuple, "SolverResult"] = {}
+_MODEL_CACHE_MAX = 4000
+
+
 def _build_model(
+    base: Mapping[str, object],
+    matches: Sequence[tuple[str, str]],
+    team: str,
+    target_final: int,
+    cutoff: int,
+    mode: str,
+    fixed: Mapping[tuple[str, str], str] | None = None,
+    optimize_rank: str | None = None,
+) -> "SolverResult":
+    """Memoriza el MILP: cada rerun de la UI vuelve a pedir los mismos modelos."""
+    try:
+        key = (
+            tuple((str(name), _points(value)) for name, value in base.items()),
+            tuple(_normalize_matches(matches)),
+            str(team), int(target_final), int(cutoff), str(mode),
+            tuple(sorted((tuple(k), str(v)) for k, v in (fixed or {}).items())),
+            optimize_rank,
+        )
+    except Exception:
+        return _build_model_uncached(base, matches, team, target_final, cutoff, mode, fixed, optimize_rank)
+    cached = _MODEL_CACHE.get(key)
+    if cached is None:
+        cached = _build_model_uncached(base, matches, team, target_final, cutoff, mode, fixed, optimize_rank)
+        if len(_MODEL_CACHE) >= _MODEL_CACHE_MAX:
+            _MODEL_CACHE.clear()
+        _MODEL_CACHE[key] = cached
+    return cached
+
+
+def _build_model_uncached(
     base: Mapping[str, object],
     matches: Sequence[tuple[str, str]],
     team: str,
@@ -150,10 +184,10 @@ def _build_model(
     elif mode == "fail":
         rows.append((count, cutoff, np.inf))
 
-    A = lil_matrix((len(rows), nvars), dtype=float)
+    # Armado vectorizado (antes fila por fila en lil_matrix: 10-30x más lento).
+    A = np.vstack([row for row, _low, _high in rows]).astype(float) if rows else np.zeros((0, nvars))
     lb = np.empty(len(rows)); ub = np.empty(len(rows))
     for i, (row, low, high) in enumerate(rows):
-        A[i, :] = row
         lb[i], ub[i] = low, high
 
     c = np.zeros(nvars)
@@ -165,7 +199,7 @@ def _build_model(
         c=c,
         integrality=np.ones(nvars),
         bounds=Bounds(np.zeros(nvars), np.ones(nvars)),
-        constraints=LinearConstraint(A.tocsr(), lb, ub),
+        constraints=LinearConstraint(A, lb, ub),
         options={"time_limit": 12.0, "mip_rel_gap": 0.0},
     )
     if not result.success or result.x is None:
@@ -413,18 +447,18 @@ def can_finish_exact_rank_by_points(
     count[y_start:] = 1
     rows.append((count, rank - 1, rank - 1))
 
-    A = lil_matrix((len(rows), nvars), dtype=float)
+    # Armado vectorizado (antes fila por fila en lil_matrix: 10-30x más lento).
+    A = np.vstack([row for row, _low, _high in rows]).astype(float) if rows else np.zeros((0, nvars))
     lb = np.empty(len(rows))
     ub = np.empty(len(rows))
     for i, (row, low, high) in enumerate(rows):
-        A[i, :] = row
         lb[i], ub[i] = low, high
 
     result = milp(
         c=np.zeros(nvars),
         integrality=np.ones(nvars),
         bounds=Bounds(np.zeros(nvars), np.ones(nvars)),
-        constraints=LinearConstraint(A.tocsr(), lb, ub),
+        constraints=LinearConstraint(A, lb, ub),
         options={"time_limit": 12.0, "mip_rel_gap": 0.0},
     )
     if not result.success or result.x is None:

@@ -356,6 +356,20 @@ def ui_dataframe(data, *args, **kwargs):
     frame = editorialize_frame(data)
     if hasattr(frame, "attrs"):
         frame.attrs.update(original_attrs)
+    if isinstance(frame, pd.DataFrame):
+        # Columnas con números y textos mezclados («—», «No calculado») rompen la
+        # conversión a Arrow y fuerzan un camino lento: se muestran como texto.
+        _mixed = [
+            col for col in frame.columns
+            if frame[col].dtype == object
+            and len({type(v) for v in frame[col] if v is not None and v == v}) > 1
+        ]
+        if _mixed:
+            _attrs = dict(frame.attrs)
+            frame = frame.copy()
+            for col in _mixed:
+                frame[col] = frame[col].map(lambda v: "" if v is None or v != v else str(v))
+            frame.attrs.update(_attrs)
     result = _ST_DATAFRAME(frame, *args, **kwargs)
     if exportable and isinstance(frame, pd.DataFrame) and not frame.empty:
         _UI_TABLE_SEQUENCE += 1
@@ -12404,7 +12418,13 @@ def _pick(label, options, key, default=None):
         if fallback not in options:
             fallback = default if default in options else options[0]
         st.session_state[key] = fallback
-    value = st.segmented_control(label, options, key=key, format_func=editorialize_text)
+    def _keep_selection():
+        # Tocar la opción ya elegida la «deselecciona»: la restauramos para que el
+        # selector nunca quede vacío ni pida dos toques.
+        if st.session_state.get(key) is None:
+            st.session_state[key] = st.session_state.get(memo, options[0])
+
+    value = st.segmented_control(label, options, key=key, format_func=editorialize_text, on_change=_keep_selection)
     if value is None:
         value = st.session_state.get(memo) if st.session_state.get(memo) in options else options[0]
     st.session_state[memo] = value
@@ -12485,8 +12505,12 @@ def _sidebar_context():
                     ui_caption(f"Última actualización automática: {_when}")
                 except Exception:
                     pass
-            if st.button("🔄 Actualizar a hoy", use_container_width=True, type="secondary" if _ok else "primary",
-                         key="btn_update_sidebar"):
+            st.button(
+                "🔄 Actualizar a hoy", use_container_width=True, type="secondary" if _ok else "primary",
+                key="btn_update_sidebar",
+                on_click=lambda: st.session_state.__setitem__("_UPDATE_REQUESTED", True),
+            )
+            if st.session_state.pop("_UPDATE_REQUESTED", False):
                 _run_auto_update()
         _msg = st.session_state.get("_UPDATE_MSG")
         if _msg:
@@ -12587,7 +12611,23 @@ _PAGES = {
 
 _nav = st.navigation(_PAGES, position="top")
 _sidebar_context()
-_nav.run()
+if os.environ.get("LPF_DEBUG_TIMING"):
+    import time as _time_dbg
+    _t_dbg = _time_dbg.perf_counter()
+    import cProfile as _cp_dbg, pstats as _ps_dbg, io as _io_dbg
+    _prof_dbg = _cp_dbg.Profile()
+    try:
+        _prof_dbg.enable()
+        _nav.run()
+    finally:
+        _prof_dbg.disable()
+        if os.environ.get("LPF_DEBUG_TIMING") == "profile":
+            _buf_dbg = _io_dbg.StringIO()
+            _ps_dbg.Stats(_prof_dbg, stream=_buf_dbg).sort_stats("tottime").print_stats(12)
+            print(_buf_dbg.getvalue(), file=sys.stderr, flush=True)
+        print(f"[timing] {getattr(_nav, 'title', '?')}: {(_time_dbg.perf_counter() - _t_dbg):.2f}s", file=sys.stderr, flush=True)
+else:
+    _nav.run()
 
 # Una vez por sesión se intenta traer la fecha actual. Corre DESPUÉS de dibujar la
 # página (fragmento con temporizador), así la app se ve y se puede leer mientras

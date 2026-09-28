@@ -69,7 +69,18 @@ def _read_runtime_api(path: Path) -> int | None:
     return None
 
 
+_COMPAT_CACHE: dict[str, dict[str, object]] = {}
+
+
 def runtime_compatibility(base_dir: str | Path | None = None) -> dict[str, object]:
+    """Igual que antes, pero se calcula una sola vez por carpeta y proceso."""
+    key = str(base_dir or "")
+    if key not in _COMPAT_CACHE:
+        _COMPAT_CACHE[key] = _runtime_compatibility_uncached(base_dir)
+    return _COMPAT_CACHE[key]
+
+
+def _runtime_compatibility_uncached(base_dir: str | Path | None = None) -> dict[str, object]:
     """Devuelve un diagnóstico JSON-safe del conjunto de módulos desplegado."""
     root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parent
     mismatches: list[dict[str, object]] = []
