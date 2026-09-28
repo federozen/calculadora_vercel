@@ -1,4 +1,4 @@
-# Calculadora LPF 2026 · versión Vercel (4.1.0)
+# Calculadora LPF 2026 · versión Vercel (3.8.74)
 
 La calculadora completa (el mismo `app.py` y el mismo motor `core/`) adaptada para
 publicarse en **Vercel**, con la navegación reorganizada.
@@ -52,6 +52,26 @@ No hacen falta variables de entorno. Opcional: `PROXY_EXTRA_HOSTS` (dominios ext
 separados por coma) si querés leer tablas de otros sitios desde «Traer la tabla desde
 una URL».
 
+## Datos siempre al día (tarea programada de GitHub)
+
+El navegador es lento para recorrer decenas de páginas de LPF/ESPN/TyC. Por eso la
+actualización pesada la hace GitHub, con Python normal, cada 2 horas:
+
+1. `.github/workflows/actualizar-datos.yml` corre `scripts/actualizar_datos.py`.
+2. El script ejecuta la misma lógica del botón «Actualizar a hoy» (mismas fuentes y
+   mismos controles: sólo acepta resultados que reconstruyen exactamente PJ, puntos y goles).
+3. Si todo cierra, guarda en `public/app/core/data/`:
+   `lpf_resultados.txt`, `lpf_last_valid.json` y `lpf_actualizacion.json`, y hace commit.
+4. Vercel publica solo el commit y la app abre ya al día, sin consultar nada al entrar.
+
+Si una corrida falla (fuente caída), no toca nada y la app sigue con los datos anteriores.
+Si igual abre con datos atrasados respecto del calendario, intenta actualizar desde el
+navegador como antes.
+
+**Primera vez:** en GitHub → pestaña **Actions** → *Actualizar datos LPF* → **Run workflow**.
+Si Actions pide habilitarse, aceptá. Si el paso «Guardar cambios» falla por permisos:
+Settings → Actions → General → *Workflow permissions* → **Read and write** → Save.
+
 ## Correrla en local como antes
 
 ```bash
@@ -68,8 +88,8 @@ repetidos en cada pantalla. Ahora:
 - **Equipo y objetivo se eligen una sola vez** en el panel lateral y todas las páginas
   los respetan (Panel, Puntos, Escenarios, Visualizaciones, Últimas fechas, Informe, chat).
 - **Actualizar a hoy** queda siempre a mano en el panel lateral, con el estado de los datos.
-- Al abrir, la app carga sola la foto incluida y enseguida intenta **actualizar a hoy**
-  desde las fuentes: ya no hay que tocar «Cargar TODO».
+- Al abrir, la app carga sola los datos que dejó la tarea programada: ya no hay que
+  tocar «Cargar TODO» ni esperar a que consulte las fuentes.
 - Menú superior con 4 secciones:
 
 | Sección | Páginas | Qué incluye (todas las funciones originales) |
